@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "AIGovernance": {
+      "commandName": "Project",
+      "commandLineArgs": "-c cmd"
+    }
+  }
+}
