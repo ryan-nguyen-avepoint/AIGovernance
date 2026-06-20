@@ -26,7 +26,7 @@ namespace ProcessFileMonitor
                 return 1;
             }
 
-            ProcessStartInfo? launchInfo = null;
+            Process? launchedProcess = null;
             int? targetPid = null;
             string? targetName = null;
             try
@@ -36,13 +36,21 @@ namespace ProcessFileMonitor
                 switch (parsed.Mode)
                 {
                     case RunMode.LaunchClaude:
-                        launchInfo = LaunchHelper.BuildClaudeLaunchInfo(logger);
-                        if (launchInfo == null) return 1;
+                        launchedProcess = LaunchHelper.LaunchClaude(logger);
+                        if (launchedProcess == null) { logger.LogError("Failed to start Claude."); return 1; }
+                        targetPid = launchedProcess.Id;
+                        logger.LogInfo($"Launched Claude: PID={targetPid}");
                         break;
-                        
+
                     case RunMode.LaunchOpenclaw:
-                        launchInfo = LaunchHelper.BuildOpenclawLaunchInfo(logger);
-                        if (launchInfo == null) return 1;
+                        string? openclawCmd = null;
+                        for (int i = 0; i < args.Length - 1; i++)
+                            if (args[i].Equals("--openclaw-cmd", StringComparison.OrdinalIgnoreCase))
+                                openclawCmd = args[i + 1];
+                        launchedProcess = LaunchHelper.LaunchOpenclaw(logger, openclawCmd);
+                        if (launchedProcess == null) { logger.LogError("Failed to start Openclaw."); return 1; }
+                        targetPid = launchedProcess.Id;
+                        logger.LogInfo($"Launched Openclaw: PID={targetPid}");
                         break;
 
                     case RunMode.AttachByPid:
@@ -63,28 +71,6 @@ namespace ProcessFileMonitor
                 logger.LogError($"Argument error: {ex.Message}");
                 PrintUsage();
                 return 1;
-            }
-
-            // --- Launch process if needed --- !!!!
-            Process? launchedProcess = null;
-            if (launchInfo != null)
-            {
-                try
-                {
-                    launchedProcess = Process.Start(launchInfo);
-                    if (launchedProcess == null)
-                    {
-                        logger.LogError("Failed to start process.");
-                        return 1;
-                    }
-                    targetPid = launchedProcess.Id;
-                    logger.LogInfo($"Launched process: {launchedProcess.ProcessName} (PID={launchedProcess.Id})");
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError($"Could not launch process: {ex.Message}");
-                    return 1;
-                }
             }
 
             // --- Resolve PID by name ---
@@ -131,6 +117,11 @@ namespace ProcessFileMonitor
                 {
                     try
                     {
+                        if(processTree.GetProcessNumber() <= 0)
+                        {
+                            cts.Cancel();
+                            break;
+                        }
                         processTree.RefreshChildren();
                         await Task.Delay(3000, cts.Token);
                     }
@@ -172,6 +163,9 @@ namespace ProcessFileMonitor
               ProcessFileMonitor openclaw        Launch Openclaw and monitor it
               ProcessFileMonitor -p <PID>        Attach to process by PID
               ProcessFileMonitor -c <name>       Attach to first process by name
+
+            OPTIONS:
+              --openclaw-cmd <subcommand>                 Openclaw subcommand (default: chat)
 
             EXAMPLES:
               ProcessFileMonitor claude

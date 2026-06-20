@@ -164,6 +164,7 @@ namespace ProcessFileMonitor.Core
             _logger = logger;
             SystemFolders = new(BuildSystemFolders);
         }
+        bool HasHiddenFolder(string path) => path.Split('\\', '/').Any(x => x.StartsWith(".") && x != "." && x != "..");
         public bool QuickValidateFile(string? rawPath)
         {
             if (string.IsNullOrWhiteSpace(rawPath) || Path.EndsInDirectorySeparator(rawPath))
@@ -192,6 +193,7 @@ namespace ProcessFileMonitor.Core
                     return false;
                 }
             }
+            if (HasHiddenFolder(path)) return false;
             return true;
         }
 

@@ -35,6 +35,7 @@ namespace ProcessFileMonitor.Core
 
         /// <summary>Returns true if the given PID is part of the tracked tree.</summary>
         public bool IsTracked(int pid) => _tracked.ContainsKey(pid);
+        public int GetProcessNumber() => _tracked.Count;
 
         /// <summary>
         /// Periodically called to find newly spawned child processes.

@@ -78,6 +78,7 @@ namespace ProcessFileMonitor.Etw
                 KernelTraceEventParser.Keywords.DiskFileIO |
                 KernelTraceEventParser.Keywords.DiskIO |
                 KernelTraceEventParser.Keywords.Process
+                //KernelTraceEventParser.Keywords.NetworkTCPIP
             );
             var parser = _session.Source.Kernel;
             parser.FileIOCreate += e => OnEventReceived(new FileEventDetails
@@ -128,6 +129,60 @@ namespace ProcessFileMonitor.Etw
                 TimeStamp = e.TimeStamp,
                 Action = ActionType.RENAME
             });
+            //parser.TcpIpSend += e => OnEventReceived(new NetworkEventDetails
+            //{
+            //    ProcessID = e.ProcessID,
+            //    ProcessName = e.ProcessName,
+            //    TimeStamp = e.TimeStamp,
+            //    Protocol = "TCP",
+            //    Action = NetActionType.SEND,
+            //    saddr = e.saddr.ToString(),
+            //    daddr = e.daddr.ToString(),
+            //    dport = e.dport,
+            //    sport = e.sport,
+            //    size = e.size
+            //});
+
+            //parser.TcpIpRecv += e => OnEventReceived(new NetworkEventDetails
+            //{
+            //    ProcessID = e.ProcessID,
+            //    ProcessName = e.ProcessName,
+            //    TimeStamp = e.TimeStamp,
+            //    Protocol = "TCP",
+            //    Action = NetActionType.RECV,
+            //    saddr = e.saddr.ToString(),
+            //    daddr = e.daddr.ToString(),
+            //    dport = e.dport,
+            //    sport = e.sport,
+            //    size = e.size
+            //});
+            //parser.UdpIpSend += e => OnEventReceived(new NetworkEventDetails
+            //{
+            //    ProcessID = e.ProcessID,
+            //    ProcessName = e.ProcessName,
+            //    TimeStamp = e.TimeStamp,
+            //    Protocol = "UDP",
+            //    Action = NetActionType.SEND,
+            //    saddr = e.saddr.ToString(),
+            //    daddr = e.daddr.ToString(),
+            //    dport = e.dport,
+            //    sport = e.sport,
+            //    size = e.size
+            //});
+
+            //parser.UdpIpRecv += e => OnEventReceived(new NetworkEventDetails
+            //{
+            //    ProcessID = e.ProcessID,
+            //    ProcessName = e.ProcessName,
+            //    TimeStamp = e.TimeStamp,
+            //    Protocol = "UDP",
+            //    Action = NetActionType.RECV,
+            //    saddr = e.saddr.ToString(),
+            //    daddr = e.daddr.ToString(),
+            //    dport = e.dport,
+            //    sport = e.sport,
+            //    size = e.size
+            //});
 
             parser.ProcessStart += e =>
             {
