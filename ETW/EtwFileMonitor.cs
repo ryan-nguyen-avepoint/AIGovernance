@@ -7,6 +7,7 @@ using ProcessFileMonitor.Core;
 using ProcessFileMonitor.Logging;
 using System.Collections.Concurrent;
 using System.Runtime.Versioning;
+using System.Text.Json;
 using System.Threading.Channels;
 
 namespace ProcessFileMonitor.Etw
@@ -26,6 +27,7 @@ namespace ProcessFileMonitor.Etw
         private readonly ConcurrentDictionary<string, DateTime> _lastTimeEvents = new();
         private MemoryCache _eventCache = new(new MemoryCacheOptions());
         private MemoryCache _lastActionCache = new(new MemoryCacheOptions());
+        private readonly NdjsonFileWriter _writer;
 
         public EtwFileMonitor(ProcessTreeTracker tree, AuditLogger logger)
         {
@@ -42,6 +44,7 @@ namespace ProcessFileMonitor.Etw
             {
                 StopOnDispose = true
             };
+            _writer = new NdjsonFileWriter("events.ndjson");
         }
         public enum ActionType
         {
@@ -70,104 +73,82 @@ namespace ProcessFileMonitor.Etw
             _logger.LogInfo("[ETW] Creating kernel trace session...");
             _session.EnableKernelProvider(
                 KernelTraceEventParser.Keywords.FileIOInit |
-                KernelTraceEventParser.Keywords.DiskFileIO | 
+                KernelTraceEventParser.Keywords.DiskFileIO |
                 KernelTraceEventParser.Keywords.Process
             );
             var parser = _session.Source.Kernel;
-            parser.FileIOCreate += e => OnEventReceived(new FileEventDetails
-            {
-                FileName = e.FileName.ToLower(),
-                ProcessID = e.ProcessID,
-                ProcessName = e.ProcessName,
-                TimeStamp = e.TimeStamp,
-                Action = ActionType.CREATE
-            }, (int)e.CreateOptions);
+            //parser.FileIOCreate += e => OnEventReceived(new FileEventDetails
+            //{
+            //    ProviderName = e.ProviderName,
+            //    OpcodeName = e.OpcodeName,
+            //    TimeStamp = e.TimeStamp,
+            //    FileName = e.FileName.ToLower(),
+            //    ProcessID = e.ProcessID,
+            //    ProcessName = e.ProcessName,
+            //    ThreadID = e.ThreadID,
+            //    CreateOptions = e.CreateOptions,
+            //    CreateDisposition = e.CreateDisposition,
+            //    FileAttributes = e.FileAttributes,
+            //    ShareAccess = e.ShareAccess,
+            //    Action = ActionType.CREATE
+            //});
             parser.FileIORead += e => OnEventReceived(new FileEventDetails
             {
+                ProviderName = e.ProviderName,
+                OpcodeName = e.OpcodeName,
+                TimeStamp = e.TimeStamp,
                 FileName = e.FileName.ToLower(),
                 ProcessID = e.ProcessID,
                 ProcessName = e.ProcessName,
-                TimeStamp = e.TimeStamp,
+                ThreadID = e.ThreadID,
+                IoSize = e.IoSize,
                 Action = ActionType.READ
             });
             parser.FileIOWrite += e => OnEventReceived(new FileEventDetails
             {
+                ProviderName = e.ProviderName,
+                OpcodeName = e.OpcodeName,
+                TimeStamp = e.TimeStamp,
                 FileName = e.FileName.ToLower(),
                 ProcessID = e.ProcessID,
                 ProcessName = e.ProcessName,
-                TimeStamp = e.TimeStamp,
+                ThreadID = e.ThreadID,
+                IoSize = e.IoSize,
                 Action = ActionType.WRITE,
             });
             parser.FileIODelete += e => OnEventReceived(new FileEventDetails
             {
+                ProviderName = e.ProviderName,
+                OpcodeName = e.OpcodeName,
+                TimeStamp = e.TimeStamp,
                 FileName = e.FileName.ToLower(),
                 ProcessID = e.ProcessID,
                 ProcessName = e.ProcessName,
-                TimeStamp = e.TimeStamp,
+                ThreadID = e.ThreadID,
+                InfoClass = e.InfoClass,
                 Action = ActionType.DELETE
             });
             parser.FileIOClose += e => OnEventReceived(new FileEventDetails
             {
+                ProviderName = e.ProviderName,
+                OpcodeName = e.OpcodeName,
+                TimeStamp = e.TimeStamp,
                 FileName = e.FileName.ToLower(),
                 ProcessID = e.ProcessID,
                 ProcessName = e.ProcessName,
-                TimeStamp = e.TimeStamp,
+                ThreadID = e.ThreadID,
                 Action = ActionType.CLOSE
             });
             parser.FileIORename += e => OnEventReceived(new FileEventDetails
             {
+                ProviderName = e.ProviderName,
+                OpcodeName = e.OpcodeName,
+                TimeStamp = e.TimeStamp,
                 FileName = e.FileName.ToLower(),
                 ProcessID = e.ProcessID,
                 ProcessName = e.ProcessName,
-                TimeStamp = e.TimeStamp,
-                Action = ActionType.RENAME
-            });
-            parser.FileIOCreate += e => OnEventReceived(new FileEventDetails
-            {
-                FileName = e.FileName.ToLower(),
-                ProcessID = e.ProcessID,
-                ProcessName = e.ProcessName,
-                TimeStamp = e.TimeStamp,
-                Action = ActionType.CREATE
-            }, (int)e.CreateOptions);
-            parser.FileIORead += e => OnEventReceived(new FileEventDetails
-            {
-                FileName = e.FileName.ToLower(),
-                ProcessID = e.ProcessID,
-                ProcessName = e.ProcessName,
-                TimeStamp = e.TimeStamp,
-                Action = ActionType.READ
-            });
-            parser.FileIOWrite += e => OnEventReceived(new FileEventDetails
-            {
-                FileName = e.FileName.ToLower(),
-                ProcessID = e.ProcessID,
-                ProcessName = e.ProcessName,
-                TimeStamp = e.TimeStamp,
-                Action = ActionType.WRITE,
-            });
-            parser.FileIODelete += e => OnEventReceived(new FileEventDetails
-            {
-                FileName = e.FileName.ToLower(),
-                ProcessID = e.ProcessID,
-                ProcessName = e.ProcessName,
-                TimeStamp = e.TimeStamp,
-                Action = ActionType.DELETE
-            });
-            parser.FileIOClose += e => OnEventReceived(new FileEventDetails
-            {
-                FileName = e.FileName.ToLower(),
-                ProcessID = e.ProcessID,
-                ProcessName = e.ProcessName,
-                TimeStamp = e.TimeStamp,
-                Action = ActionType.CLOSE
-            });
-            parser.FileIORename += e => OnEventReceived(new FileEventDetails
-            {
-                FileName = e.FileName.ToLower(),
-                ProcessID = e.ProcessID,
-                ProcessName = e.ProcessName,
-                TimeStamp = e.TimeStamp,
+                ThreadID = e.ThreadID,
+                InfoClass = e.InfoClass,
                 Action = ActionType.RENAME
             });
 
@@ -219,28 +200,36 @@ namespace ProcessFileMonitor.Etw
             _session.Source.Process();
             _logger.LogInfo("[ETW] Session ended.");
         }
-        private void OnEventReceived(FileEventDetails e, int createOptions = 0)
+        private void OnEventReceived(FileEventDetails e)
         {
+            if(e.FileName.Contains("test2.txt"))
+            {
+
+            }
             if (
                 !_tree.IsTracked(e.ProcessID) ||
                 e.ProcessID == Environment.ProcessId ||
                 !_fileFilter.QuickValidateFile(e.FileName)
             ) return;
+            e.FileName = NormalizePath(e.FileName);
             if (e.Action == ActionType.CREATE)
             {
-                if ((createOptions & 0x00000001) != 0) // Ignore folder
+                if (((int)e.CreateOptions! & 0x00000001) != 0) // Ignore folder
                 {
                     return;
                 }
-                if ((createOptions & 0x00200000) != 0) // Only for link/junction/reparse point
+                if (((int)e.CreateOptions! & 0x00200000) != 0) // Only for link/junction/reparse point
                 {
                     return;
                 }
-                if ((createOptions & 0x1000) != 0) // OPEN TO DELETE
+                if (((int)e.CreateOptions! & 0x1000) != 0) // OPEN TO DELETE
                 {
                     e.Action = ActionType.DELETE;
                 }
             }
+            (var parentPid, var rootPid) = _tree.GetParentAndRoot(e.ProcessID);
+            e.ParentProcessId = parentPid;
+            e.RootProcessId = rootPid;
             if (!_eventChannel.Writer.TryWrite(e))
             {
                 _logger.LogWarning($"[ETW] Cannot write event {e.Action} to event channel. Check if channel is full");
@@ -290,18 +279,6 @@ namespace ProcessFileMonitor.Etw
                                     targetEvent = sg;
                                 }
                             }
-                            if (targetEvent.Action == ActionType.RENAME)
-                            {
-                                targetEvent = new FileRenameEventDetails
-                                {
-                                    FileName = targetEvent.FileName,
-                                    ProcessID = targetEvent.ProcessID,
-                                    ProcessName = targetEvent.ProcessName,
-                                    TimeStamp = targetEvent.TimeStamp,
-                                    Action = targetEvent.Action,
-                                    NewFileName = null
-                                };
-                            }
                             return targetEvent;
                         }).ToList();
                         var renameEvent = newEvents.Where(n => n.Action == ActionType.RENAME);
@@ -315,7 +292,7 @@ namespace ProcessFileMonitor.Etw
                             );
                             if (firstCloseEvent != null)
                             {
-                                (e as FileRenameEventDetails)!.NewFileName = firstCloseEvent.FileName;
+                                e.NewFileName = firstCloseEvent.FileName;
                                 newEvents.Remove(firstCloseEvent);
                             }
                         }
@@ -364,9 +341,9 @@ namespace ProcessFileMonitor.Etw
                         Console.Error.WriteLine($"[ProcessEvent] Failed to get event from queue event: {ex.Message}");
                         _newEventsQueue.Clear();
                     }
-                    try 
-                    { 
-                        var listEventIdToTrigger = new List<string>(); 
+                    try
+                    {
+                        var listEventIdToTrigger = new List<string>();
                         var now = DateTime.UtcNow;
                         var expiredKeys = _lastTimeEvents.Where(x => x.Value < now)
                             .Select(x => _lastTimeEvents.TryRemove(x.Key, out _) ? x.Key : null)
@@ -415,9 +392,9 @@ namespace ProcessFileMonitor.Etw
                                 case ActionType.WRITE:
                                     OnFileCommonAction(e);
                                     break;
-                                case ActionType.CLOSE:
-                                    OnFileCommonAction(e);
-                                    break;
+                                //case ActionType.CLOSE:
+                                //    OnFileCommonAction(e);
+                                //    break;
                                 case ActionType.RENAME:
                                     OnRenameFileAction(e);
                                     break;
@@ -450,6 +427,7 @@ namespace ProcessFileMonitor.Etw
                     ProcessName = e.ProcessName,
                     FileName = e.FileName,
                 });
+                _writer.Write(JsonSerializer.Serialize(e));
             }
             catch (Exception ex)
             {
@@ -461,8 +439,7 @@ namespace ProcessFileMonitor.Etw
             var operation = e.Action.ToString();
             try
             {
-                var renameEvent = (e as FileRenameEventDetails)!;
-                if (!_fileFilter.IsValidFile(renameEvent.FileName, false)) return;
+                if (!_fileFilter.IsValidFile(e.FileName, false)) return;
 
                 var auditEvent = new FileAuditEvent
                 {
@@ -472,11 +449,12 @@ namespace ProcessFileMonitor.Etw
                     ProcessName = e.ProcessName,
                     FileName = e.FileName,
                 };
-                if (!string.IsNullOrEmpty(renameEvent.NewFileName))
+                if (!string.IsNullOrEmpty(e.NewFileName))
                 {
-                    auditEvent.ExtraInfo = $"NewFileName={renameEvent?.NewFileName}";
+                    auditEvent.ExtraInfo = $"NewFileName={e?.NewFileName}";
                 }
                 _logger.LogFileEvent(auditEvent);
+                _writer.Write(JsonSerializer.Serialize(e));
             }
             catch (Exception ex)
             {
@@ -498,6 +476,7 @@ namespace ProcessFileMonitor.Etw
                     ProcessName = e.ProcessName,
                     FileName = e.FileName,
                 });
+                _writer.Write(JsonSerializer.Serialize(e));
             }
             catch (Exception ex)
             {
@@ -533,6 +512,7 @@ namespace ProcessFileMonitor.Etw
                         ProcessName = e.ProcessName,
                         FileName = e.FileName,
                     });
+                    _writer.Write(JsonSerializer.Serialize(e));
                 }
             }
             catch (Exception ex)
@@ -545,19 +525,47 @@ namespace ProcessFileMonitor.Etw
             _session?.Dispose();
             _eventChannel.Writer.TryComplete();
         }
-
-        private class FileEventDetails
+        public string NormalizePath(string path)
         {
-            public string FileName { get; set; } = "";
-            public int ProcessID { get; set; }
-            public string ProcessName { get; set; } = "";
-            public DateTime TimeStamp { get; set; }
-            public ActionType Action { get; set; }
+            try
+            {
+                return new FileInfo(path).FullName;
+            }
+            catch
+            {
+                return path;
+            }
         }
 
-        private class FileRenameEventDetails: FileEventDetails
+        private class FileEventDetails : BaseFileEventDetails
         {
-            public string? NewFileName { get; set; } = "";
+            // Rename
+            public string? NewFileName { get; set; } = null;
+
+            // Create/Open
+            public CreateOptions? CreateOptions { get; set; }
+            public CreateDisposition? CreateDisposition { get; set; }
+            public FileAttributes? FileAttributes { get; set; }
+            public FileShare? ShareAccess { get; set; }
+
+            // Read, Write
+            public Int32? IoSize { get; set; }
+
+            // Rename, Delete
+            public Int32? InfoClass { get; set; }
+        }
+        private class BaseFileEventDetails
+        {
+            public String ProviderName { get; set; } = string.Empty;
+            public String OpcodeName { get; set; } = string.Empty;
+            public DateTime TimeStamp { get; set; } = DateTime.Now;
+            public string FileName { get; set; } = string.Empty;
+            public int ProcessID { get; set; }
+            public string ProcessName { get; set; } = string.Empty;
+            public Int32 ThreadID { get; set; }
+            public int? ParentProcessId { get; set; }
+            public int? RootProcessId { get; set; }
+            public ActionType Action { get; set; }
         }
     }
 }

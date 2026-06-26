@@ -25,7 +25,7 @@ namespace ProcessFileMonitor.Core
 
         /// <summary>
         /// Add new processid OpenclawProcessMonitor.
-        /// Auto scan child proccess, if PID already exists, then ignore
+        /// Auto scan child process, if PID already exists, then ignore.
         /// </summary>
         public void AddRoot(int rootPid)
         {
@@ -45,11 +45,11 @@ namespace ProcessFileMonitor.Core
             }
 
             _logger.LogInfo($"[Tree] Adding new root PID={rootPid}");
-            ScanIntoTree(rootPid, rootPid, tree, depth: 0, quiet: false);
+            ScanIntoTree(rootPid, rootPid, tree, depth: 0, quiet: false, parentPid: -1);
         }
 
         /// <summary>
-        /// Delete PID from tree, delete child process too
+        /// Delete PID from tree, delete child process too.
         /// </summary>
         public void RemovePid(int pid)
         {
@@ -57,7 +57,7 @@ namespace ProcessFileMonitor.Core
 
             if (!_trees.TryGetValue(rootPid, out var tree)) return;
 
-            // Collect all PID to delete
+            // Collect all PIDs to delete
             var toRemove = new List<int>();
             CollectSubtree(pid, tree, toRemove);
 
@@ -75,6 +75,7 @@ namespace ProcessFileMonitor.Core
                 _logger.LogInfo($"[Tree] Removed entire tree PID={pid}");
             }
         }
+
         private static void CollectSubtree(int pid, ConcurrentDictionary<int, ProcessInfo> tree, List<int> result)
         {
             result.Add(pid);
@@ -84,6 +85,7 @@ namespace ProcessFileMonitor.Core
                     CollectSubtree(childPid, tree, result);
             }
         }
+
         public bool IsTracked(int pid) => _pidToRoot.ContainsKey(pid);
 
         public bool IsEmpty()
@@ -95,7 +97,7 @@ namespace ProcessFileMonitor.Core
         }
 
         /// <summary>
-        /// Delete dead process, renew child process
+        /// Delete dead processes, renew child processes.
         /// </summary>
         public void RefreshAll()
         {
@@ -113,16 +115,34 @@ namespace ProcessFileMonitor.Core
                     continue;
                 }
 
-                // Delete child process and child of child
+                // Remove dead child processes
                 foreach (var pid in tree.Keys.ToArray())
                 {
                     if (pid != rootPid && IsProcessDead(pid))
                         RemovePid(pid);
                 }
 
-                // Scan new pid
-                ScanIntoTree(rootPid, rootPid, tree, depth: 0, quiet: true);
+                // Scan for new child PIDs
+                ScanIntoTree(rootPid, rootPid, tree, depth: 0, quiet: true, parentPid: -1);
             }
+        }
+
+        /// <summary>
+        /// Lấy ParentPid và RootPid từ một PID bất kỳ.
+        /// Nếu PID không được track thì cả hai đều null.
+        /// Nếu PID là root node thì ParentPid = null, RootPid có giá trị.
+        /// </summary>
+        public (int? ParentPid, int? RootPid) GetParentAndRoot(int pid)
+        {
+            if (!_pidToRoot.TryGetValue(pid, out int foundRoot))
+                return (null, null);
+
+            if (!_trees.TryGetValue(foundRoot, out var tree) ||
+                !tree.TryGetValue(pid, out var info))
+                return (null, null);
+
+            int? parentPid = info.ParentPid == -1 ? null : info.ParentPid;
+            return (parentPid, foundRoot);
         }
 
         private void ScanIntoTree(
@@ -130,11 +150,12 @@ namespace ProcessFileMonitor.Core
             int rootPid,
             ConcurrentDictionary<int, ProcessInfo> tree,
             int depth,
-            bool quiet)
+            bool quiet,
+            int parentPid)
         {
             if (depth > 10) return;
 
-            // if pid belongs to other tree, then ignore
+            // If pid belongs to another tree, skip
             if (_pidToRoot.TryGetValue(pid, out int existingRoot) && existingRoot != rootPid)
             {
                 if (!quiet)
@@ -142,19 +163,19 @@ namespace ProcessFileMonitor.Core
                 return;
             }
 
-            // newpid
+            // New PID — add to tree
             if (!tree.ContainsKey(pid))
             {
                 try
                 {
                     var process = Process.GetProcessById(pid);
-                    var info = new ProcessInfo(pid, process.ProcessName, SafeGetStartTime(process));
+                    var info = new ProcessInfo(pid, process.ProcessName, SafeGetStartTime(process), parentPid);
 
                     if (tree.TryAdd(pid, info))
                     {
                         _pidToRoot[pid] = rootPid;
                         if (!quiet)
-                            _logger.LogInfo($"[Tree] Tracking PID={pid} '{process.ProcessName}' root={rootPid} depth={depth}");
+                            _logger.LogInfo($"[Tree] Tracking PID={pid} '{process.ProcessName}' root={rootPid} depth={depth} parent={parentPid}");
                     }
                 }
                 catch (Exception ex)
@@ -165,9 +186,9 @@ namespace ProcessFileMonitor.Core
                 }
             }
 
-            // Scan children
+            // Scan children, passing current pid as their parentPid
             foreach (int childPid in NativeProcessHelper.GetChildPids(pid))
-                ScanIntoTree(childPid, rootPid, tree, depth + 1, quiet);
+                ScanIntoTree(childPid, rootPid, tree, depth + 1, quiet, parentPid: pid);
         }
 
         private static bool IsProcessDead(int pid)
@@ -187,5 +208,5 @@ namespace ProcessFileMonitor.Core
         }
     }
 
-    public record ProcessInfo(int Pid, string Name, DateTime StartTime);
+    public record ProcessInfo(int Pid, string Name, DateTime StartTime, int ParentPid = -1);
 }

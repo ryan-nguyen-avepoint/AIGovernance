@@ -89,7 +89,7 @@ namespace ProcessFileMonitor
 
             if (targetPid == null)
             {
-                logger.LogWarning("Could not determine target PID.");
+                logger.LogInfo("There is no target PID.");
             }
             else
             {
