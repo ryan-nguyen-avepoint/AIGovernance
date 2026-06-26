@@ -70,7 +70,10 @@ namespace ProcessFileMonitor.Core
 
             // If root is deleted, then remove the whole tree
             if (pid == rootPid)
+            {
                 _trees.TryRemove(rootPid, out _);
+                _logger.LogInfo($"[Tree] Removed entire tree PID={pid}");
+            }
         }
         private static void CollectSubtree(int pid, ConcurrentDictionary<int, ProcessInfo> tree, List<int> result)
         {

@@ -110,7 +110,7 @@ namespace ProcessFileMonitor
             };
 
             // Background task: keep updating process tree with new children
-            var openclawProcessMonitor = new OpenclawProcessMonitor(logger);
+            var openclawProcessMonitor = new OpenclawProcessMonitor(processTree, logger);
             var monitor = new EtwFileMonitor(processTree, logger);
             var treeRefreshTask = Task.Run(async () =>
             {
@@ -158,19 +158,19 @@ namespace ProcessFileMonitor
             Support openclaw, not support claude now
 
             USAGE:
+              ProcessFileMonitor                 Listen to all AI process running (Recommend)
               ProcessFileMonitor openclaw        Launch new Openclaw process and monitor it
               ProcessFileMonitor -p <PID>        Attach to process by PID
               ProcessFileMonitor -c <name>       Attach to first process by name
-              ProcessFileMonitor                 Listen to all AI process running
 
             OPTIONS:
               --openclaw-cmd <subcommand>        Openclaw subcommand (default: chat)
 
             EXAMPLES:
+              ProcessFileMonitor
               ProcessFileMonitor openclaw
               ProcessFileMonitor -p 1234
               ProcessFileMonitor -c notepad
-              ProcessFileMonitor
             """);
         }
     }

@@ -1,4 +1,6 @@
-﻿using Microsoft.Diagnostics.Tracing.Parsers;
+﻿using Microsoft.Diagnostics.Tracing;
+using Microsoft.Diagnostics.Tracing.Parsers;
+using Microsoft.Diagnostics.Tracing.Parsers.Kernel;
 using Microsoft.Diagnostics.Tracing.Session;
 using Microsoft.Extensions.Caching.Memory;
 using ProcessFileMonitor.Core;
@@ -120,6 +122,54 @@ namespace ProcessFileMonitor.Etw
                 TimeStamp = e.TimeStamp,
                 Action = ActionType.RENAME
             });
+            parser.FileIOCreate += e => OnEventReceived(new FileEventDetails
+            {
+                FileName = e.FileName.ToLower(),
+                ProcessID = e.ProcessID,
+                ProcessName = e.ProcessName,
+                TimeStamp = e.TimeStamp,
+                Action = ActionType.CREATE
+            }, (int)e.CreateOptions);
+            parser.FileIORead += e => OnEventReceived(new FileEventDetails
+            {
+                FileName = e.FileName.ToLower(),
+                ProcessID = e.ProcessID,
+                ProcessName = e.ProcessName,
+                TimeStamp = e.TimeStamp,
+                Action = ActionType.READ
+            });
+            parser.FileIOWrite += e => OnEventReceived(new FileEventDetails
+            {
+                FileName = e.FileName.ToLower(),
+                ProcessID = e.ProcessID,
+                ProcessName = e.ProcessName,
+                TimeStamp = e.TimeStamp,
+                Action = ActionType.WRITE,
+            });
+            parser.FileIODelete += e => OnEventReceived(new FileEventDetails
+            {
+                FileName = e.FileName.ToLower(),
+                ProcessID = e.ProcessID,
+                ProcessName = e.ProcessName,
+                TimeStamp = e.TimeStamp,
+                Action = ActionType.DELETE
+            });
+            parser.FileIOClose += e => OnEventReceived(new FileEventDetails
+            {
+                FileName = e.FileName.ToLower(),
+                ProcessID = e.ProcessID,
+                ProcessName = e.ProcessName,
+                TimeStamp = e.TimeStamp,
+                Action = ActionType.CLOSE
+            });
+            parser.FileIORename += e => OnEventReceived(new FileEventDetails
+            {
+                FileName = e.FileName.ToLower(),
+                ProcessID = e.ProcessID,
+                ProcessName = e.ProcessName,
+                TimeStamp = e.TimeStamp,
+                Action = ActionType.RENAME
+            });
 
             parser.ProcessStart += e =>
             {
@@ -131,6 +181,7 @@ namespace ProcessFileMonitor.Etw
                     if (!OpenclawProcessMonitor.IsOpenclaw(parentCmd)) return;
 
                     OpenclawProcessMonitor.TrackedPids[e.ProcessID] = e.CommandLine;
+                    _tree.AddRoot(e.ProcessID);
                     _logger.LogInfo($"[PROCESS] New child process spawned PID={e.ProcessID} by ParentPID={e.ParentID} ProcessName={e.ImageFileName} CMD={e.CommandLine}");
                 }
                 catch (Exception ex)
@@ -170,10 +221,6 @@ namespace ProcessFileMonitor.Etw
         }
         private void OnEventReceived(FileEventDetails e, int createOptions = 0)
         {
-            if (e.FileName.Contains("testa"))
-            {
-
-            }
             if (
                 !_tree.IsTracked(e.ProcessID) ||
                 e.ProcessID == Environment.ProcessId ||

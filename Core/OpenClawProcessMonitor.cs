@@ -11,11 +11,13 @@ namespace ProcessFileMonitor.Core
     public class OpenclawProcessMonitor
     {
         private readonly AuditLogger _logger;
+        private readonly ProcessTreeTracker _tree;
         public static readonly ConcurrentDictionary<int, string> TrackedPids = new();
 
-        public OpenclawProcessMonitor(AuditLogger logger)
+        public OpenclawProcessMonitor(ProcessTreeTracker tree, AuditLogger logger)
         {
             _logger = logger;
+            _tree = tree;
         }
 
         public static bool IsOpenclaw(string? text) => text?.Contains("openclaw", StringComparison.OrdinalIgnoreCase) == true;
@@ -72,7 +74,7 @@ namespace ProcessFileMonitor.Core
                 string parentCmd = allCmdLines.GetValueOrDefault(parentPid, "");
                 if (IsOpenclaw(parentCmd) && (IsOpenclaw(cmd) || IsOpenclaw(exe)))
                 {
-                    TrackedPids[pid] = cmd;
+                    _tree.AddRoot(pid);
                     _logger.LogInfo($"[SEED] PID={pid} | {cmd}");
                 }
             }
