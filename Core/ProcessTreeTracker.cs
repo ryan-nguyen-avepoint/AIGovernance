@@ -1,105 +1,180 @@
-﻿using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
+﻿using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Linq;
 using System.Runtime.Versioning;
 using ProcessFileMonitor.Logging;
 
 namespace ProcessFileMonitor.Core
 {
-    /// <summary>
-    /// Maintains a live set of PIDs for the target process and its entire descendant tree.
-    /// Uses WMI/ToolHelp32 to enumerate child processes.
-    /// </summary>
     [SupportedOSPlatform("windows")]
     public class ProcessTreeTracker
     {
         private readonly AuditLogger _logger;
-        private readonly ConcurrentDictionary<int, ProcessInfo> _tracked = new();
-        private int _rootPid;
 
-        public IReadOnlyCollection<int> TrackedPids => _tracked.Keys.ToList();
+        // rootPid → (pid → ProcessInfo)
+        private readonly ConcurrentDictionary<int, ConcurrentDictionary<int, ProcessInfo>> _trees = new();
+
+        // pid → rootPid (reverse lookup, make sure no duplicate)
+        private readonly ConcurrentDictionary<int, int> _pidToRoot = new();
+
+        public IReadOnlyCollection<int> TrackedPids => _pidToRoot.Keys.ToList();
 
         public ProcessTreeTracker(AuditLogger logger)
         {
             _logger = logger;
         }
 
-        public void Initialize(int rootPid)
-        {
-            _rootPid = rootPid;
-            _tracked.Clear();
-            ScanTree(rootPid, depth: 0);
-        }
-
-        /// <summary>Returns true if the given PID is part of the tracked tree.</summary>
-        public bool IsTracked(int pid) => _tracked.ContainsKey(pid);
-        public int GetProcessNumber() => _tracked.Count;
-
         /// <summary>
-        /// Periodically called to find newly spawned child processes.
+        /// Add new processid OpenclawProcessMonitor.
+        /// Auto scan child proccess, if PID already exists, then ignore
         /// </summary>
-        public void RefreshChildren()
+        public void AddRoot(int rootPid)
         {
-            // Remove dead processes
-            foreach (var kvp in _tracked.ToArray())
+            if (_pidToRoot.ContainsKey(rootPid))
             {
-                try
-                {
-                    var p = Process.GetProcessById(kvp.Key);
-                    if (p.HasExited)
-                    {
-                        if (_tracked.TryRemove(kvp.Key, out _))
-                            _logger.LogInfo($"[Tree] Process exited: PID={kvp.Key} ({kvp.Value.Name})");
-                    }
-                }
-                catch
-                {
-                    if (_tracked.TryRemove(kvp.Key, out var info))
-                        _logger.LogInfo($"[Tree] Process gone: PID={kvp.Key} ({info.Name})");
-                }
-            }
-
-            // Scan for new children
-            ScanTree(_rootPid, depth: 0, quiet: true);
-        }
-
-        private void ScanTree(int pid, int depth, bool quiet = false)
-        {
-            if (depth > 10) return; // Safety limit
-
-            try
-            {
-                var process = Process.GetProcessById(pid);
-                if (!_tracked.ContainsKey(pid))
-                {
-                    var info = new ProcessInfo(pid, process.ProcessName,
-                        SafeGetStartTime(process));
-                    if (_tracked.TryAdd(pid, info) && !quiet)
-                        _logger.LogInfo($"[Tree] Tracking PID={pid} '{process.ProcessName}' (depth={depth})");
-                }
-            }
-            catch (Exception ex)
-            {
-                if (!quiet)
-                    _logger.LogWarning($"[Tree] Cannot access PID={pid}: {ex.Message}");
+                _logger.LogInfo($"[Tree] PID={rootPid} already tracked under root={_pidToRoot[rootPid]}, skipping.");
                 return;
             }
 
-            // Find children via snapshot
-            foreach (int childPid in GetChildPids(pid))
+            // Create new tree for this root
+            var tree = new ConcurrentDictionary<int, ProcessInfo>();
+            if (!_trees.TryAdd(rootPid, tree))
             {
-                ScanTree(childPid, depth + 1, quiet);
+                // Race condition: tree is already added by another process
+                _logger.LogInfo($"[Tree] Root PID={rootPid} already being added, skipping.");
+                return;
             }
+
+            _logger.LogInfo($"[Tree] Adding new root PID={rootPid}");
+            ScanIntoTree(rootPid, rootPid, tree, depth: 0, quiet: false);
         }
 
         /// <summary>
-        /// Gets direct child PIDs using ToolHelp32 snapshot (via NativeProcessHelper).
+        /// Delete PID from tree, delete child process too
         /// </summary>
-        private static IEnumerable<int> GetChildPids(int parentPid)
+        public void RemovePid(int pid)
         {
-            return NativeProcessHelper.GetChildPids(parentPid);
+            if (!_pidToRoot.TryGetValue(pid, out int rootPid)) return;
+
+            if (!_trees.TryGetValue(rootPid, out var tree)) return;
+
+            // Collect all PID to delete
+            var toRemove = new List<int>();
+            CollectSubtree(pid, tree, toRemove);
+
+            foreach (var p in toRemove)
+            {
+                tree.TryRemove(p, out var info);
+                _pidToRoot.TryRemove(p, out _);
+                _logger.LogInfo($"[Tree] Removed PID={p} ({info?.Name}) from tree root={rootPid}");
+            }
+
+            // If root is deleted, then remove the whole tree
+            if (pid == rootPid)
+                _trees.TryRemove(rootPid, out _);
+        }
+        private static void CollectSubtree(int pid, ConcurrentDictionary<int, ProcessInfo> tree, List<int> result)
+        {
+            result.Add(pid);
+            foreach (int childPid in NativeProcessHelper.GetChildPids(pid))
+            {
+                if (tree.ContainsKey(childPid))
+                    CollectSubtree(childPid, tree, result);
+            }
+        }
+        public bool IsTracked(int pid) => _pidToRoot.ContainsKey(pid);
+
+        public bool IsEmpty()
+        {
+            bool empty = _pidToRoot.IsEmpty;
+            if (empty)
+                _logger.LogInfo("[Tree] All process trees are empty. No openclaw processes running.");
+            return empty;
+        }
+
+        /// <summary>
+        /// Delete dead process, renew child process
+        /// </summary>
+        public void RefreshAll()
+        {
+            foreach (var (rootPid, tree) in _trees.ToArray())
+            {
+                if (IsProcessDead(rootPid))
+                {
+                    // Root is dead, remove whole tree
+                    if (_trees.TryRemove(rootPid, out var deadTree))
+                    {
+                        foreach (var pid in deadTree.Keys)
+                            _pidToRoot.TryRemove(pid, out _);
+                        _logger.LogInfo($"[Tree] Root PID={rootPid} dead, entire tree removed.");
+                    }
+                    continue;
+                }
+
+                // Delete child process and child of child
+                foreach (var pid in tree.Keys.ToArray())
+                {
+                    if (pid != rootPid && IsProcessDead(pid))
+                        RemovePid(pid);
+                }
+
+                // Scan new pid
+                ScanIntoTree(rootPid, rootPid, tree, depth: 0, quiet: true);
+            }
+        }
+
+        private void ScanIntoTree(
+            int pid,
+            int rootPid,
+            ConcurrentDictionary<int, ProcessInfo> tree,
+            int depth,
+            bool quiet)
+        {
+            if (depth > 10) return;
+
+            // if pid belongs to other tree, then ignore
+            if (_pidToRoot.TryGetValue(pid, out int existingRoot) && existingRoot != rootPid)
+            {
+                if (!quiet)
+                    _logger.LogWarning($"[Tree] PID={pid} already belongs to root={existingRoot}, skipping.");
+                return;
+            }
+
+            // newpid
+            if (!tree.ContainsKey(pid))
+            {
+                try
+                {
+                    var process = Process.GetProcessById(pid);
+                    var info = new ProcessInfo(pid, process.ProcessName, SafeGetStartTime(process));
+
+                    if (tree.TryAdd(pid, info))
+                    {
+                        _pidToRoot[pid] = rootPid;
+                        if (!quiet)
+                            _logger.LogInfo($"[Tree] Tracking PID={pid} '{process.ProcessName}' root={rootPid} depth={depth}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (!quiet)
+                        _logger.LogWarning($"[Tree] Cannot access PID={pid}: {ex.Message}");
+                    return;
+                }
+            }
+
+            // Scan children
+            foreach (int childPid in NativeProcessHelper.GetChildPids(pid))
+                ScanIntoTree(childPid, rootPid, tree, depth + 1, quiet);
+        }
+
+        private static bool IsProcessDead(int pid)
+        {
+            try
+            {
+                var p = Process.GetProcessById(pid);
+                return p.HasExited;
+            }
+            catch { return true; }
         }
 
         private static DateTime SafeGetStartTime(Process p)

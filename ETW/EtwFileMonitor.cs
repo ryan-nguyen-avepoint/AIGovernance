@@ -16,7 +16,7 @@ namespace ProcessFileMonitor.Etw
 
         private readonly ProcessTreeTracker _tree;
         private readonly AuditLogger _logger;
-        private TraceEventSession? _session;
+        private readonly TraceEventSession _session;
         private FilePathFilter _fileFilter;
         private readonly Channel<FileEventDetails> _eventChannel;
         private readonly ConcurrentDictionary<string, List<FileEventDetails>> _allEvents = new(StringComparer.OrdinalIgnoreCase);
@@ -36,6 +36,10 @@ namespace ProcessFileMonitor.Etw
                 SingleReader = true,
                 SingleWriter = false,
             });
+            _session = new TraceEventSession(SessionName)
+            {
+                StopOnDispose = true
+            };
         }
         public enum ActionType
         {
@@ -58,12 +62,10 @@ namespace ProcessFileMonitor.Etw
         }
         private void RunSession(CancellationToken ct)
         {
+            if (TraceEventSession.GetActiveSession(SessionName) != null)
+                TraceEventSession.GetActiveSession(SessionName)?.Stop();
             TraceEventSession.GetActiveSession(SessionName)?.Dispose(); // Dispose any stale session with same name
             _logger.LogInfo("[ETW] Creating kernel trace session...");
-            using var _session = new TraceEventSession(SessionName)
-            {
-                StopOnDispose = true
-            };
             _session.EnableKernelProvider(
                 KernelTraceEventParser.Keywords.FileIOInit |
                 KernelTraceEventParser.Keywords.DiskFileIO | 
@@ -121,17 +123,38 @@ namespace ProcessFileMonitor.Etw
 
             parser.ProcessStart += e =>
             {
-                if (_tree.IsTracked(e.ParentID))
+                try
                 {
+                    bool selfMatch = OpenclawProcessMonitor.IsOpenclaw(e.CommandLine) || OpenclawProcessMonitor.IsOpenclaw(e.ImageFileName);
+                    if (!selfMatch) return;
+                    string parentCmd = OpenclawProcessMonitor.GetCommandLine(e.ParentID);
+                    if (!OpenclawProcessMonitor.IsOpenclaw(parentCmd)) return;
+
+                    OpenclawProcessMonitor.TrackedPids[e.ProcessID] = e.CommandLine;
                     _logger.LogInfo($"[PROCESS] New child process spawned PID={e.ProcessID} by ParentPID={e.ParentID} ProcessName={e.ImageFileName} CMD={e.CommandLine}");
-                    _tree.RefreshChildren();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning($"[PROCESS] Error processing start event for PID={e.ProcessID}: {ex.Message}");
                 }
             };
+
             parser.ProcessStop += e =>
             {
-                if (_tree.IsTracked(e.ProcessID))
+                try
                 {
-                    _logger.LogInfo($"[PROCESS] Tracked process exited PID={e.ProcessID} ParentPID={e.ParentID} ProcessName={e.ProcessName} ExitCode={e.ExitStatus}");
+                    if (_tree.IsTracked(e.ProcessID))
+                    {
+                        _logger.LogInfo($"[PROCESS] Tracked process exited PID={e.ProcessID} ParentPID={e.ParentID} ProcessName={e.ProcessName} ExitCode={e.ExitStatus}");
+                        if (OpenclawProcessMonitor.TrackedPids.TryRemove(e.ProcessID, out _))
+                        {
+                            _logger.LogInfo($"This PID is openclaw process");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning($"[PROCESS] Error processing stop event for PID={e.ProcessID}: {ex.Message}");
                 }
             };
             ct.Register(() =>
@@ -142,11 +165,15 @@ namespace ProcessFileMonitor.Etw
             });
             _logger.LogInfo("[ETW] Session started. Listening for file system events...");
             _logger.LogInfo(new string('─', 80));
-            _session.Source.Process(); // Blocking call - processes events until session is stopped
+            _session.Source.Process();
             _logger.LogInfo("[ETW] Session ended.");
         }
         private void OnEventReceived(FileEventDetails e, int createOptions = 0)
         {
+            if (e.FileName.Contains("testa"))
+            {
+
+            }
             if (
                 !_tree.IsTracked(e.ProcessID) ||
                 e.ProcessID == Environment.ProcessId ||
@@ -360,9 +387,6 @@ namespace ProcessFileMonitor.Etw
                 }
             }
             catch (OperationCanceledException) { }
-            // Get from batch and output one result + merge with list + check time + timeok then push all + save 2 last records + reset time
-            // Dk thoa man: 2 event tu cung 1 process va action se k push trong ktg ngan + 1 file chi cung 1 sk trong 20s, hoac khi queue trong qua 5s tuc la khi do ta reset expire time + neu 2 lan lien tiep cung 1 event thi lay event t2 khac voi event vua gui, neu la open thi bo qua + lan dau tien thi giam 20s xuong con 10s + lan dau cung in luon
-            // RENAME > DELETE > UPDATE > READ > CREATE/OPEN
         }
         private void OnFileCreate(FileEventDetails e)
         {

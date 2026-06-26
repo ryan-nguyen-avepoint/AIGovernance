@@ -5,7 +5,7 @@ namespace ProcessFileMonitor.Core
     public enum RunMode
     {
         Unknown,
-        LaunchClaude,
+        All,
         LaunchOpenclaw,
         AttachByPid,
         AttachByName
@@ -24,14 +24,10 @@ namespace ProcessFileMonitor.Core
         {
             if (args.Length == 0)
             {
-                throw new ArgumentException(
-                    "No arguments provided. Use 'claude', 'openclaw', '-p <pid>', or '-c <name>'.");
+                return new ParsedArgs { Mode = RunMode.All };
             }
 
             string first = args[0].Trim().ToLowerInvariant();
-
-            if (first == "claude")
-                return new ParsedArgs { Mode = RunMode.LaunchClaude };
 
             if (first == "openclaw")
                 return new ParsedArgs { Mode = RunMode.LaunchOpenclaw };

@@ -10,6 +10,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.2.3" />
     <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="11.0.0-preview.5.26302.115" />
+    <PackageReference Include="System.Management" Version="10.0.9" />
   </ItemGroup>
 
 </Project>

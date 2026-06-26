@@ -35,11 +35,7 @@ namespace ProcessFileMonitor
                 
                 switch (parsed.Mode)
                 {
-                    case RunMode.LaunchClaude:
-                        launchedProcess = LaunchHelper.LaunchClaude(logger);
-                        if (launchedProcess == null) { logger.LogError("Failed to start Claude."); return 1; }
-                        targetPid = launchedProcess.Id;
-                        logger.LogInfo($"Launched Claude: PID={targetPid}");
+                    case RunMode.All:
                         break;
 
                     case RunMode.LaunchOpenclaw:
@@ -80,25 +76,29 @@ namespace ProcessFileMonitor
                 procs = procs.Where(p => p.Id != Environment.ProcessId).ToArray();
                 if (procs.Length == 0)
                 {
-                    logger.LogError($"No process found with name '{targetName}'.");
-                    return 1;
+                    logger.LogWarning($"No process found with name '{targetName}'.");
                 }
-                var first = procs.Where(p => p.Id != Environment.ProcessId).OrderByDescending(p => p.StartTime).First();
-                targetPid = first.Id;
-                logger.LogInfo($"Found process '{targetName}' -> PID={targetPid} (StartTime={first.StartTime:yyyy-MM-dd HH:mm:ss})");
+                else
+                {
+                    var first = procs.Where(p => p.Id != Environment.ProcessId).OrderByDescending(p => p.StartTime).First();
+                    targetPid = first.Id;
+                    logger.LogInfo($"Found process '{targetName}' -> PID={targetPid} (StartTime={first.StartTime:yyyy-MM-dd HH:mm:ss})");
+                }
             }
+            var processTree = new ProcessTreeTracker(logger);
+
             if (targetPid == null)
             {
-                logger.LogError("Could not determine target PID.");
-                return 1;
+                logger.LogWarning("Could not determine target PID.");
             }
+            else
+            {
+                processTree.AddRoot(targetPid.Value);
 
-            // --- Build process tree ---
-            var processTree = new ProcessTreeTracker(logger);
-            processTree.Initialize(targetPid.Value);
-
-            logger.LogInfo($"Monitoring PID={targetPid} and process tree: [{string.Join(", ", processTree.TrackedPids)}]");
-            logger.LogInfo("Press Ctrl+C to stop monitoring.\n");
+                logger.LogInfo($"Monitoring PID={targetPid} and process tree: [{string.Join(", ", processTree.TrackedPids)}]");
+                logger.LogInfo("Press Ctrl+C to stop monitoring.\n");
+            }
+            
 
             // --- Start ETW session ---
             using var cts = new CancellationTokenSource();
@@ -110,6 +110,7 @@ namespace ProcessFileMonitor
             };
 
             // Background task: keep updating process tree with new children
+            var openclawProcessMonitor = new OpenclawProcessMonitor(logger);
             var monitor = new EtwFileMonitor(processTree, logger);
             var treeRefreshTask = Task.Run(async () =>
             {
@@ -117,12 +118,7 @@ namespace ProcessFileMonitor
                 {
                     try
                     {
-                        if(processTree.GetProcessNumber() <= 0)
-                        {
-                            cts.Cancel();
-                            break;
-                        }
-                        processTree.RefreshChildren();
+                        processTree.RefreshAll();
                         await Task.Delay(3000, cts.Token);
                     }
                     catch (OperationCanceledException) { break; }
@@ -135,6 +131,7 @@ namespace ProcessFileMonitor
 
             try
             {
+                openclawProcessMonitor.InitExistingProcesses();
                 await monitor.StartAsync(cts.Token);
             }
             catch (Exception ex)
@@ -158,19 +155,22 @@ namespace ProcessFileMonitor
             ║         ProcessFileMonitor - ETW File Auditor        ║
             ╚══════════════════════════════════════════════════════╝
 
+            Support openclaw, not support claude now
+
             USAGE:
-              ProcessFileMonitor claude          Launch Claude and monitor it
-              ProcessFileMonitor openclaw        Launch Openclaw and monitor it
+              ProcessFileMonitor openclaw        Launch new Openclaw process and monitor it
               ProcessFileMonitor -p <PID>        Attach to process by PID
               ProcessFileMonitor -c <name>       Attach to first process by name
+              ProcessFileMonitor                 Listen to all AI process running
 
             OPTIONS:
-              --openclaw-cmd <subcommand>                 Openclaw subcommand (default: chat)
+              --openclaw-cmd <subcommand>        Openclaw subcommand (default: chat)
 
             EXAMPLES:
-              ProcessFileMonitor claude
+              ProcessFileMonitor openclaw
               ProcessFileMonitor -p 1234
               ProcessFileMonitor -c notepad
+              ProcessFileMonitor
             """);
         }
     }
