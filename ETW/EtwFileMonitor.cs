@@ -156,6 +156,12 @@ namespace ProcessFileMonitor.Etw
             {
                 try
                 {
+                    if (_tree.IsTracked(e.ParentID))
+                    {
+                        _logger.LogInfo($"[PROCESS] New child process spawned PID={e.ProcessID} by ParentPID={e.ParentID} ProcessName={e.ImageFileName} CMD={e.CommandLine}");
+                        _tree.RefreshAll();
+                    }
+
                     bool selfMatch = OpenclawProcessMonitor.IsOpenclaw(e.CommandLine) || OpenclawProcessMonitor.IsOpenclaw(e.ImageFileName);
                     if (!selfMatch) return;
                     string parentCmd = OpenclawProcessMonitor.GetCommandLine(e.ParentID);
@@ -202,7 +208,7 @@ namespace ProcessFileMonitor.Etw
         }
         private void OnEventReceived(FileEventDetails e)
         {
-            if(e.FileName.Contains("test2.txt") && e.Action == ActionType.DELETE)
+            if (e.FileName.Contains("test2.txt") && e.Action == ActionType.DELETE)
             {
 
             }
