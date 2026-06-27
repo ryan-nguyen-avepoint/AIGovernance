@@ -77,21 +77,21 @@ namespace ProcessFileMonitor.Etw
                 KernelTraceEventParser.Keywords.Process
             );
             var parser = _session.Source.Kernel;
-            //parser.FileIOCreate += e => OnEventReceived(new FileEventDetails
-            //{
-            //    ProviderName = e.ProviderName,
-            //    OpcodeName = e.OpcodeName,
-            //    TimeStamp = e.TimeStamp,
-            //    FileName = e.FileName.ToLower(),
-            //    ProcessID = e.ProcessID,
-            //    ProcessName = e.ProcessName,
-            //    ThreadID = e.ThreadID,
-            //    CreateOptions = e.CreateOptions,
-            //    CreateDisposition = e.CreateDisposition,
-            //    FileAttributes = e.FileAttributes,
-            //    ShareAccess = e.ShareAccess,
-            //    Action = ActionType.CREATE
-            //});
+            parser.FileIOCreate += e => OnEventReceived(new FileEventDetails
+            {
+                ProviderName = e.ProviderName,
+                OpcodeName = e.OpcodeName,
+                TimeStamp = e.TimeStamp,
+                FileName = e.FileName.ToLower(),
+                ProcessID = e.ProcessID,
+                ProcessName = e.ProcessName,
+                ThreadID = e.ThreadID,
+                CreateOptions = e.CreateOptions,
+                CreateDisposition = e.CreateDisposition,
+                FileAttributes = e.FileAttributes,
+                ShareAccess = e.ShareAccess,
+                Action = ActionType.CREATE
+            });
             parser.FileIORead += e => OnEventReceived(new FileEventDetails
             {
                 ProviderName = e.ProviderName,
@@ -202,7 +202,7 @@ namespace ProcessFileMonitor.Etw
         }
         private void OnEventReceived(FileEventDetails e)
         {
-            if(e.FileName.Contains("test2.txt"))
+            if(e.FileName.Contains("test2.txt") && e.Action == ActionType.DELETE)
             {
 
             }

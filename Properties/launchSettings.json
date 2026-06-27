@@ -2,7 +2,7 @@
   "profiles": {
     "AIGovernance": {
       "commandName": "Project",
-      "commandLineArgs": ""
+      "commandLineArgs": "-p 79728"
     }
   }
 }
